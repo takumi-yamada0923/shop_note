@@ -87,6 +87,7 @@ const has = (text, kw) => String(text || "").toLowerCase().includes(kw);
 // リンクは http/https のみ許可（javascript: などは弾く）
 const safeUrl = u => /^https?:\/\/\S+$/i.test(u || "") ? u : "";
 const linkHtml = u => safeUrl(u) ? `<a href="${esc(safeUrl(u))}" target="_blank" rel="noopener noreferrer">開く</a>` : "";
+const mapLink = place => place ? `<a href="${esc("https://www.google.com/maps/search/?api=1&query=" + encodeURIComponent(place))}" target="_blank" rel="noopener noreferrer">地図で見る</a>` : "";
 function readUrl() {
   const u = $("f-url").value.trim();
   if (u && !safeUrl(u)) { alert("URLは http:// または https:// で始まる形式で入力してください"); return null; }
@@ -110,7 +111,7 @@ function viewShops() {
   app.innerHTML = `
     <div class="bar"><h2>店一覧</h2><a class="btn primary" href="#/shop/new">店を登録</a></div>
     <div class="filters">
-      <label>キーワード<input id="q" placeholder="店名・料金・メモ・嬢の名前" value="${esc(shopFilter.q)}"></label>
+      <label>キーワード<input id="q" placeholder="店名・場所・料金・メモ・嬢の名前" value="${esc(shopFilter.q)}"></label>
       <label>種類<select id="ft">${opts([["", "すべて"], ...TYPES.map(t => [t, t])], shopFilter.type)}</select></label>
     </div>
     <div class="wrap" id="out"></div>`;
@@ -120,10 +121,10 @@ function viewShops() {
     const all = shopList(), gl = girlList();
     const rows = all.filter(s =>
       (!shopFilter.type || s.type === shopFilter.type) &&
-      (!kw || has(s.name, kw) || has(s.price, kw) || has(s.memo, kw) || gl.some(g => g.shopId === s.id && has(g.name, kw))));
+      (!kw || has(s.name, kw) || has(s.place, kw) || has(s.price, kw) || has(s.memo, kw) || gl.some(g => g.shopId === s.id && has(g.name, kw))));
     $("out").innerHTML = `<table>
-      <thead><tr><th>店名</th><th>種類</th><th>料金目安</th><th>嬢</th><th>リンク</th><th>メモ</th></tr></thead>
-      <tbody>${rows.map(s => `<tr data-href="#/shop/${esc(s.id)}"><td>${esc(s.name)}</td><td>${esc(s.type)}</td><td>${esc(s.price)}</td>
+      <thead><tr><th>店名</th><th>種類</th><th>場所</th><th>料金目安</th><th>嬢</th><th>リンク</th><th>メモ</th></tr></thead>
+      <tbody>${rows.map(s => `<tr data-href="#/shop/${esc(s.id)}"><td>${esc(s.name)}</td><td>${esc(s.type)}</td><td class="memo">${esc(s.place)}</td><td>${esc(s.price)}</td>
         <td>${gl.filter(g => g.shopId === s.id).length}人</td><td>${linkHtml(s.url)}</td><td class="memo">${esc(s.memo)}</td></tr>`).join("")}</tbody></table>
       ${rows.length ? "" : `<div class="empty">${all.length ? "条件に一致する店がありません。" : "まだ店が登録されていません。"}</div>`}`;
   };
@@ -134,13 +135,14 @@ function viewShops() {
 /* ---------- 店の登録・編集 ---------- */
 function viewShopForm(id) {
   formOpen = true;
-  const s = id ? shops[id] : { name: "", price: "", type: TYPES[0], url: "", memo: "" };
+  const s = id ? shops[id] : { name: "", place: "", price: "", type: TYPES[0], url: "", memo: "" };
   if (!s) return missing();
   app.innerHTML = `
     <h2>${id ? "店の編集" : "店の登録"}</h2>
     <div class="form">
       <label>店名<input id="f-name" maxlength="60" value="${esc(s.name)}"></label>
       <label>料金目安<input id="f-price" maxlength="60" placeholder="例：60分 15,000円" value="${esc(s.price)}"></label>
+      <label>場所（エリア・最寄り駅・住所）<input id="f-place" maxlength="100" placeholder="例：新宿・歌舞伎町" value="${esc(s.place)}"></label>
       <label>種類<select id="f-type">${opts(TYPES.map(t => [t, t]), s.type)}</select></label>
       <label>リンク（URL）<input id="f-url" type="url" maxlength="500" placeholder="https://" value="${esc(s.url)}"></label>
       <label>メモ<textarea id="f-memo">${esc(s.memo)}</textarea></label>
@@ -151,7 +153,7 @@ function viewShopForm(id) {
     if (!name) return alert("店名を入力してください");
     const url = readUrl();
     if (url === null) return;
-    const val = { name, price: $("f-price").value.trim(), type: $("f-type").value, url, memo: $("f-memo").value.trim() };
+    const val = { name, price: $("f-price").value.trim(), type: $("f-type").value, place: $("f-place").value.trim(), url, memo: $("f-memo").value.trim() };
     if (id) shopsRef.child(id).update(val).then(() => { location.hash = "#/shop/" + id; }).catch(showError);
     else shopsRef.push({ ...val, createdAt: Date.now() }).then(r => { location.hash = "#/shop/" + r.key; }).catch(showError);
   };
@@ -166,7 +168,7 @@ function viewShop(id) {
   app.innerHTML = `
     <div class="bar"><h2>${esc(s.name)}</h2>
       <div class="btns"><a class="btn" href="#/">一覧へ</a><a class="btn" href="#/shop/${esc(id)}/edit">編集</a><a class="btn primary" href="#/shop/${esc(id)}/girl">嬢を登録</a></div></div>
-    <div class="card"><dl><dt>種類</dt><dd>${esc(s.type)}</dd><dt>料金目安</dt><dd>${esc(s.price) || "－"}</dd><dt>リンク</dt><dd>${linkHtml(s.url) || "－"}</dd><dt>メモ</dt><dd>${esc(s.memo) || "－"}</dd></dl></div>
+    <div class="card"><dl><dt>種類</dt><dd>${esc(s.type)}</dd><dt>場所</dt><dd>${esc(s.place) || "－"} ${mapLink(s.place)}</dd><dt>料金目安</dt><dd>${esc(s.price) || "－"}</dd><dt>リンク</dt><dd>${linkHtml(s.url) || "－"}</dd><dt>メモ</dt><dd>${esc(s.memo) || "－"}</dd></dl></div>
     <h2>在籍の嬢</h2>
     <div class="wrap"><table>
       <thead><tr><th>名前</th><th>見た目</th><th>リンク</th><th>メモ</th></tr></thead>
