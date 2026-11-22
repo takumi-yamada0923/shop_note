@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>レビューメモ</title>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+<style>
+:root{--g:#3f3a63;--bg:#f4f3f8;--ln:#d6d3e2;--tx:#1f1d2b;--mu:#6a6780;--red:#b3261e;--ok:#1d6b4a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.6 "Hiragino Sans","Yu Gothic",Meiryo,sans-serif}
+header{background:var(--g);padding:10px 16px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+header a{color:#fff;text-decoration:none}
+header .logo{font-size:20px;font-weight:700;letter-spacing:.05em;margin-right:auto}
+main{max-width:900px;margin:0 auto;padding:16px}
+h2{margin:8px 0 14px;font-size:18px}
+.bar{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap}
+.btn,button{font:inherit;padding:8px 16px;border:1px solid var(--g);background:#fff;color:var(--g);border-radius:6px;cursor:pointer;text-decoration:none;display:inline-block}
+.primary{background:var(--g);color:#fff}
+.danger{border-color:var(--red);color:var(--red)}
+.btn:focus-visible,button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,header a:focus-visible{outline:3px solid #9d97d6;outline-offset:1px}
+.wrap{overflow-x:auto;background:#fff;border:1px solid var(--ln);border-radius:6px}
+table{border-collapse:collapse;width:100%;min-width:520px}
+th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--ln);white-space:nowrap}
+th{background:#e9e7f2;font-weight:600}
+td.memo{max-width:260px;overflow:hidden;text-overflow:ellipsis}
+tr[data-href]{cursor:pointer}
+tr[data-href]:hover{background:#f1effa}
+.form{background:#fff;border:1px solid var(--ln);border-radius:6px;padding:16px;display:grid;gap:14px;max-width:480px}
+.form label{display:grid;gap:4px;font-weight:600}
+.form input,.form select,.form textarea{font:inherit;padding:8px;border:1px solid var(--ln);border-radius:6px;background:#fff}
+textarea{min-height:110px;resize:vertical}
+.btns{display:flex;gap:8px;flex-wrap:wrap}
+.filters{display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin-bottom:12px}
+.filters label{display:grid;gap:2px;font-size:13px;color:var(--mu)}
+.filters input,.filters select{font:inherit;padding:6px 8px;border:1px solid var(--ln);border-radius:6px;background:#fff;color:var(--tx)}
+.card{background:#fff;border:1px solid var(--ln);border-radius:6px;padding:14px 16px;margin-bottom:16px}
+.card dl{display:grid;grid-template-columns:7em 1fr;gap:4px 8px;margin:0}
+.card dt{color:var(--mu)}.card dd{margin:0;white-space:pre-wrap}
+.look{font-weight:700;font-size:17px}
+.l-o{color:var(--ok)}.l-x{color:var(--red)}.l-t{color:#9a6b00}.l-q{color:var(--mu)}
+.empty{padding:24px;text-align:center;color:var(--mu)}
+.status{max-width:900px;margin:0 auto;padding:0 16px 16px;color:var(--mu);font-size:13px}
+.err{color:var(--red)}
+</style>
+</head>
+<body>
+<header><a class="logo" href="#/">レビューメモ</a><a href="#/">店一覧</a><a href="#/girls">嬢一覧</a></header>
+<main id="app"></main>
+<div class="status" id="status">Firebaseに接続しています...</div>
+
+<script>
+const firebaseConfig = {
+  apiKey: "AIzaSyB-qPzDHJSnRHNHKvNd-D-sTu6v1-sRnilI",
+  authDomain: "zatsudan-mate.firebaseapp.com",
+  databaseURL: "https://zatsudan-mate-default-rtdb.firebaseio.com",
+  projectId: "zatsudan-mate",
+  storageBucket: "zatsudan-mate.firebasestorage.app",
+  messagingSenderId: "1008942200664",
+  appId: "1:1008942200664:web:191aa9a2cca34ff32f972d",
+  measurementId: "G-JSPJDPL1P1"
+};
+firebase.initializeApp(firebaseConfig);
+const db = firebase.database();
+const shopsRef = db.ref("reviewShops"); // 他のサイトと混ざらない専用パス
+const girlsRef = db.ref("reviewGirls");
+
+const TYPES = ["デリヘル", "ソープ", "おっぱぶ", "ピンサロ", "メンズエステ", "オナクラ", "その他"];
+const LOOKS = ["〇", "△", "×", "？"];
+const LOOK_CLASS = { "〇": "l-o", "△": "l-t", "×": "l-x", "？": "l-q" };
+const app = document.getElementById("app");
+let shops = {}, girls = {}, loaded = false, formOpen = false, gotS = false, gotG = false;
+let shopFilter = { q: "", type: "" }, girlFilter = { q: "", look: "", shop: "" };
+
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const opts = (list, sel) => list.map(([v, l]) => `<option value="${esc(v)}"${String(v) === String(sel) ? " selected" : ""}>${esc(l)}</option>`).join("");
+const byNew = (a, b) => (b.createdAt || 0) - (a.createdAt || 0);
+const shopList = () => Object.entries(shops).map(([id, s]) => ({ id, ...s })).sort(byNew);
+const girlList = () => Object.entries(girls).map(([id, g]) => ({ id, ...g })).sort(byNew);
+const girlsOf = sid => girlList().filter(g => g.shopId === sid);
+const shopName = sid => (shops[sid] && shops[sid].name) || "（削除された店）";
+const lookHtml = l => `<span class="look ${LOOK_CLASS[l] || ""}">${esc(l)}</span>`;
+const has = (text, kw) => String(text || "").toLowerCase().includes(kw);
+
+// リンクは http/https のみ許可（javascript: などは弾く）
+const safeUrl = u => /^https?:\/\/\S+$/i.test(u || "") ? u : "";
+const linkHtml = u => safeUrl(u) ? `<a href="${esc(safeUrl(u))}" target="_blank" rel="noopener noreferrer">開く</a>` : "";
+function readUrl() {
+  const u = $("f-url").value.trim();
+  if (u && !safeUrl(u)) { alert("URLは http:// または https:// で始まる形式で入力してください"); return null; }
+  return u;
+}
+
+function showError(e) {
+  console.error(e);
+  const s = $("status");
+  s.textContent = "Firebaseの読み書きに失敗しました。接続とデータベースルールを確認してください。";
+  s.className = "status err";
+}
+function missing() {
+  formOpen = false;
+  app.innerHTML = '<div class="empty">データが見つかりません。<br><a href="#/">店一覧へ戻る</a></div>';
+}
+
+/* ---------- 店の一覧・検索 ---------- */
+function viewShops() {
+  formOpen = false;
+  app.innerHTML = `
+    <div class="bar"><h2>店一覧</h2><a class="btn primary" href="#/shop/new">店を登録</a></div>
+    <div class="filters">
+      <label>キーワード<input id="q" placeholder="店名・料金・メモ・嬢の名前" value="${esc(shopFilter.q)}"></label>
+      <label>種類<select id="ft">${opts([["", "すべて"], ...TYPES.map(t => [t, t])], shopFilter.type)}</select></label>
+    </div>
+    <div class="wrap" id="out"></div>`;
+  const draw = () => {
+    shopFilter = { q: $("q").value.trim(), type: $("ft").value };
+    const kw = shopFilter.q.toLowerCase();
+    const all = shopList(), gl = girlList();
+    const rows = all.filter(s =>
+      (!shopFilter.type || s.type === shopFilter.type) &&
+      (!kw || has(s.name, kw) || has(s.price, kw) || has(s.memo, kw) || gl.some(g => g.shopId === s.id && has(g.name, kw))));
+    $("out").innerHTML = `<table>
+      <thead><tr><th>店名</th><th>種類</th><th>料金目安</th><th>嬢</th><th>リンク</th><th>メモ</th></tr></thead>
+      <tbody>${rows.map(s => `<tr data-href="#/shop/${esc(s.id)}"><td>${esc(s.name)}</td><td>${esc(s.type)}</td><td>${esc(s.price)}</td>
+        <td>${gl.filter(g => g.shopId === s.id).length}人</td><td>${linkHtml(s.url)}</td><td class="memo">${esc(s.memo)}</td></tr>`).join("")}</tbody></table>
+      ${rows.length ? "" : `<div class="empty">${all.length ? "条件に一致する店がありません。" : "まだ店が登録されていません。"}</div>`}`;
+  };
+  $("q").oninput = draw; $("ft").onchange = draw;
+  draw();
+}
+
+/* ---------- 店の登録・編集 ---------- */
+function viewShopForm(id) {
+  formOpen = true;
+  const s = id ? shops[id] : { name: "", price: "", type: TYPES[0], url: "", memo: "" };
+  if (!s) return missing();
+  app.innerHTML = `
+    <h2>${id ? "店の編集" : "店の登録"}</h2>
+    <div class="form">
+      <label>店名<input id="f-name" maxlength="60" value="${esc(s.name)}"></label>
+      <label>料金目安<input id="f-price" maxlength="60" placeholder="例：60分 15,000円" value="${esc(s.price)}"></label>
+      <label>種類<select id="f-type">${opts(TYPES.map(t => [t, t]), s.type)}</select></label>
+      <label>リンク（URL）<input id="f-url" type="url" maxlength="500" placeholder="https://" value="${esc(s.url)}"></label>
+      <label>メモ<textarea id="f-memo">${esc(s.memo)}</textarea></label>
+      <div class="btns"><button class="primary" id="f-save">登録</button><a class="btn" href="#/${id ? "shop/" + esc(id) : ""}">戻る</a></div>
+    </div>`;
+  $("f-save").onclick = () => {
+    const name = $("f-name").value.trim();
+    if (!name) return alert("店名を入力してください");
+    const url = readUrl();
+    if (url === null) return;
+    const val = { name, price: $("f-price").value.trim(), type: $("f-type").value, url, memo: $("f-memo").value.trim() };
+    if (id) shopsRef.child(id).update(val).then(() => { location.hash = "#/shop/" + id; }).catch(showError);
+    else shopsRef.push({ ...val, createdAt: Date.now() }).then(r => { location.hash = "#/shop/" + r.key; }).catch(showError);
+  };
+}
+
+/* ---------- 店の詳細 ---------- */
+function viewShop(id) {
+  formOpen = false;
+  const s = shops[id];
+  if (!s) return missing();
+  const gl = girlsOf(id);
+  app.innerHTML = `
+    <div class="bar"><h2>${esc(s.name)}</h2>
+      <div class="btns"><a class="btn" href="#/">一覧へ</a><a class="btn" href="#/shop/${esc(id)}/edit">編集</a><a class="btn primary" href="#/shop/${esc(id)}/girl">嬢を登録</a></div></div>
+    <div class="card"><dl><dt>種類</dt><dd>${esc(s.type)}</dd><dt>料金目安</dt><dd>${esc(s.price) || "－"}</dd><dt>リンク</dt><dd>${linkHtml(s.url) || "－"}</dd><dt>メモ</dt><dd>${esc(s.memo) || "－"}</dd></dl></div>
+    <h2>在籍の嬢</h2>
+    <div class="wrap"><table>
+      <thead><tr><th>名前</th><th>見た目</th><th>リンク</th><th>メモ</th></tr></thead>
+      <tbody>${gl.map(g => `<tr data-href="#/girl/${esc(g.id)}/edit"><td>${esc(g.name)}</td><td>${lookHtml(g.look)}</td><td>${linkHtml(g.url)}</td><td class="memo">${esc(g.memo)}</td></tr>`).join("")}</tbody>
+    </table>${gl.length ? "" : '<div class="empty">まだ嬢が登録されていません。</div>'}</div>
+    <p><button class="danger" id="del">この店を削除</button></p>`;
+  $("del").onclick = () => {
+    if (!confirm(`「${s.name}」と、登録済みの嬢${gl.length}人をすべて削除します。よろしいですか？`)) return;
+    const upd = { ["reviewShops/" + id]: null };
+    gl.forEach(g => { upd["reviewGirls/" + g.id] = null; });
+    db.ref().update(upd).then(() => { location.hash = "#/"; }).catch(showError);
+  };
+}
+
+/* ---------- 嬢の登録・編集 ---------- */
+function viewGirlForm(shopId, gid) {
+  formOpen = true;
+  const g = gid ? girls[gid] : { shopId, name: "", look: "？", url: "", memo: "" };
+  if (!g || (!gid && !shops[shopId])) return missing();
+  const back = "#/shop/" + g.shopId;
+  app.innerHTML = `
+    <h2>${gid ? "嬢の編集" : "嬢の登録"}</h2>
+    <div class="form">
+      <label>店<select id="f-shop">${opts(shopList().map(s => [s.id, s.name]), g.shopId)}</select></label>
+      <label>名前<input id="f-name" maxlength="40" value="${esc(g.name)}"></label>
+      <label>見た目<select id="f-look">${opts(LOOKS.map(l => [l, l]), g.look)}</select></label>
+      <label>リンク（URL）<input id="f-url" type="url" maxlength="500" placeholder="https://" value="${esc(g.url)}"></label>
+      <label>メモ<textarea id="f-memo">${esc(g.memo)}</textarea></label>
+      <div class="btns"><button class="primary" id="f-save">登録</button><a class="btn" href="${esc(back)}">戻る</a>
+        ${gid ? '<button class="danger" id="f-del">削除</button>' : ""}</div>
+    </div>`;
+  $("f-save").onclick = () => {
+    const name = $("f-name").value.trim();
+    if (!name) return alert("名前を入力してください");
+    const url = readUrl();
+    if (url === null) return;
+    const val = { shopId: $("f-shop").value, name, look: $("f-look").value, url, memo: $("f-memo").value.trim() };
+    const done = () => { location.hash = "#/shop/" + val.shopId; };
+    if (gid) girlsRef.child(gid).update(val).then(done).catch(showError);
+    else girlsRef.push({ ...val, createdAt: Date.now() }).then(done).catch(showError);
+  };
+  if (gid) $("f-del").onclick = () => {
+    if (confirm("この嬢を削除します。よろしいですか？")) girlsRef.child(gid).remove().then(() => { location.hash = back; }).catch(showError);
+  };
+}
+
+/* ---------- 嬢の一覧・検索 ---------- */
+function viewGirls() {
+  formOpen = false;
+  app.innerHTML = `
+    <div class="bar"><h2>嬢一覧</h2></div>
+    <div class="filters">
+      <label>キーワード<input id="q" placeholder="名前・メモ・店名" value="${esc(girlFilter.q)}"></label>
+      <label>見た目<select id="fl">${opts([["", "すべて"], ...LOOKS.map(l => [l, l])], girlFilter.look)}</select></label>
+      <label>店<select id="fs">${opts([["", "すべて"], ...shopList().map(s => [s.id, s.name])], girlFilter.shop)}</select></label>
+    </div>
+    <div class="wrap" id="out"></div>`;
+  const draw = () => {
+    girlFilter = { q: $("q").value.trim(), look: $("fl").value, shop: $("fs").value };
+    const kw = girlFilter.q.toLowerCase();
+    const all = girlList();
+    const rows = all.filter(g =>
+      (!girlFilter.look || g.look === girlFilter.look) && (!girlFilter.shop || g.shopId === girlFilter.shop) &&
+      (!kw || has(g.name, kw) || has(g.memo, kw) || has(shopName(g.shopId), kw)));
+    $("out").innerHTML = `<table>
+      <thead><tr><th>名前</th><th>店</th><th>見た目</th><th>リンク</th><th>メモ</th></tr></thead>
+      <tbody>${rows.map(g => `<tr data-href="#/girl/${esc(g.id)}/edit"><td>${esc(g.name)}</td><td>${esc(shopName(g.shopId))}</td><td>${lookHtml(g.look)}</td><td>${linkHtml(g.url)}</td><td class="memo">${esc(g.memo)}</td></tr>`).join("")}</tbody></table>
+      ${rows.length ? "" : `<div class="empty">${all.length ? "条件に一致する嬢がいません。" : "まだ嬢が登録されていません。店の詳細画面から登録できます。"}</div>`}`;
+  };
+  $("q").oninput = draw; $("fl").onchange = draw; $("fs").onchange = draw;
+  draw();
+}
+
+/* ---------- ルーティング ---------- */
+function route() {
+  if (!loaded) { app.innerHTML = '<div class="empty">読み込み中...</div>'; return; }
+  const p = (location.hash.slice(1) || "/").split("/").filter(Boolean);
+  if (!p.length) return viewShops();
+  if (p[0] === "girls") return viewGirls();
+  if (p[0] === "shop") {
+    if (p[1] === "new") return viewShopForm();
+    if (p.length === 2) return viewShop(p[1]);
+    if (p[2] === "edit") return viewShopForm(p[1]);
+    if (p[2] === "girl") return viewGirlForm(p[1]);
+  }
+  if (p[0] === "girl" && p[2] === "edit" && girls[p[1]]) return viewGirlForm(girls[p[1]].shopId, p[1]);
+  missing();
+}
+app.addEventListener("click", e => {
+  if (e.target.closest("a")) return;
+  const tr = e.target.closest("tr[data-href]");
+  if (tr) location.hash = tr.dataset.href;
+});
+window.addEventListener("hashchange", route);
+
+function onData() {
+  if (!(gotS && gotG)) return;
+  const first = !loaded;
+  loaded = true;
+  const st = $("status");
+  st.textContent = "接続中：変更はリアルタイムに保存・反映されます";
+  st.className = "status";
+  if (first || !formOpen) route(); // 入力中のフォームは再描画しない
+}
+shopsRef.on("value", snap => { shops = snap.val() || {}; gotS = true; onData(); }, showError);
+girlsRef.on("value", snap => { girls = snap.val() || {}; gotG = true; onData(); }, showError);
+</script>
+</body>
+</html>
